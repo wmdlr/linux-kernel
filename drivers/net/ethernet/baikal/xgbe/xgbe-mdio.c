@@ -131,7 +131,7 @@
 static int be_xgbe_an_enable_kr_training(struct xgbe_prv_data *pdata)
 {
 	int ret;
-	DBGPR("%s\n", __FUNCTION__);
+	DBGPR_MDIO("%s\n", __FUNCTION__);
 	return 0;	// ???
 
 	ret = XMDIO_READ(pdata, MDIO_MMD_PMAPMD, MDIO_PMA_10GBR_PMD_CTRL);
@@ -147,7 +147,7 @@ static int be_xgbe_an_enable_kr_training(struct xgbe_prv_data *pdata)
 static int be_xgbe_phy_pcs_power_cycle(struct xgbe_prv_data *pdata)
 {
 	int ret;
-	DBGPR("%s\n", __FUNCTION__);
+	DBGPR_MDIO("%s\n", __FUNCTION__);
 	return 0;
 
 	ret = XMDIO_READ(pdata, MDIO_MMD_PCS, MDIO_CTRL1);
@@ -165,10 +165,22 @@ static int be_xgbe_phy_pcs_power_cycle(struct xgbe_prv_data *pdata)
 	return 0;
 }
 
+#define VR_XS_OR_PCS_MMD_DIGITAL_CTL1	0x8000
+#define VR_XS_PMA_MII_ENT_GEN5_GEN_CTL	0x809C
+
+#define VR_XS_PMA_MII_ENT_GEN5_GEN_CTL_LANE_MODE_KX4	(4 << 0)
+#define VR_XS_PMA_MII_ENT_GEN5_GEN_CTL_LANE_MODE_MASK	0x0007
+
+#define VR_XS_PMA_MII_ENT_GEN5_GEN_CTL_LINK_WIDTH_4	(2 << 8)
+#define VR_XS_PMA_MII_ENT_GEN5_GEN_CTL_LINK_WIDTH_MASK	0x0700
+
+#define VR_XS_OR_PCS_MMD_DIGITAL_CTL1_VR_RST	(1 << 15)
+
 static int be_xgbe_phy_xgmii_mode(struct xgbe_prv_data *pdata)
 {
+#if 0
 	int ret;
-	DBGPR("%s\n", __FUNCTION__);
+	DBGPR_MDIO("%s\n", __FUNCTION__);
 	/* Enable KR training */
 	ret = be_xgbe_an_enable_kr_training(pdata);
 	if (ret < 0)
@@ -198,12 +210,77 @@ static int be_xgbe_phy_xgmii_mode(struct xgbe_prv_data *pdata)
 	//priv->mode = BE_XGBE_MODE_KR;
 
 	return 0;
+#else
+	int  ret, count;
+
+	DBGPR_MDIO("%s\n", __FUNCTION__);
+
+	/* Write 2'b01 to Bits[1:0] of SR PCS Control2 to set the xpcx_kr_0 output to 0. */
+	ret = XMDIO_READ(pdata, MDIO_MMD_PCS, MDIO_CTRL2);
+	if (ret < 0)
+		return ret;
+
+	ret &= ~MDIO_PCS_CTRL2_TYPE;
+	ret |= MDIO_PCS_CTRL2_10GBX;
+	XMDIO_WRITE(pdata, MDIO_MMD_PCS, MDIO_CTRL2, ret);
+
+	/* Set Bit 13 SR PMA MMD Control1 Register (for back plane) to 1. */
+	ret = XMDIO_READ(pdata, MDIO_MMD_PMAPMD, MDIO_CTRL1);
+	if (ret < 0)
+		return ret;
+
+	ret |= 0x2000;
+	XMDIO_WRITE(pdata, MDIO_MMD_PMAPMD, MDIO_CTRL1, ret);
+
+	/* Set LANE_MODE TO KX4 (4). */
+	ret = XMDIO_READ(pdata, MDIO_MMD_PMAPMD, VR_XS_PMA_MII_ENT_GEN5_GEN_CTL);
+	if (ret < 0)
+		return ret;
+
+	ret &= ~VR_XS_PMA_MII_ENT_GEN5_GEN_CTL_LANE_MODE_MASK;
+	ret |= VR_XS_PMA_MII_ENT_GEN5_GEN_CTL_LANE_MODE_KX4;
+	XMDIO_WRITE(pdata, MDIO_MMD_PMAPMD, VR_XS_PMA_MII_ENT_GEN5_GEN_CTL, ret);
+
+	/* Set LANE_WIDTH (2) 4 lanes per link. */
+	ret = XMDIO_READ(pdata, MDIO_MMD_PMAPMD, VR_XS_PMA_MII_ENT_GEN5_GEN_CTL);
+	if (ret < 0)
+		return ret;
+
+	ret &= ~VR_XS_PMA_MII_ENT_GEN5_GEN_CTL_LINK_WIDTH_MASK;
+	ret |= VR_XS_PMA_MII_ENT_GEN5_GEN_CTL_LINK_WIDTH_4;
+	XMDIO_WRITE(pdata, MDIO_MMD_PMAPMD, VR_XS_PMA_MII_ENT_GEN5_GEN_CTL, ret);
+
+	/* Initiate Software Reset. */
+	ret = XMDIO_READ(pdata, MDIO_MMD_PCS, VR_XS_OR_PCS_MMD_DIGITAL_CTL1);
+	if (ret < 0)
+		return ret;
+
+	ret |= VR_XS_OR_PCS_MMD_DIGITAL_CTL1_VR_RST;
+	XMDIO_WRITE(pdata, MDIO_MMD_PCS, VR_XS_OR_PCS_MMD_DIGITAL_CTL1, ret);
+
+	/* Wait until reset done. */
+	count = 50;
+
+	do {
+		msleep(20);
+
+		ret = XMDIO_READ(pdata, MDIO_MMD_PCS, VR_XS_OR_PCS_MMD_DIGITAL_CTL1);
+		if (ret < 0)
+			return ret;
+
+	} while (!!(ret & VR_XS_OR_PCS_MMD_DIGITAL_CTL1_VR_RST) && --count);
+
+	if (ret & VR_XS_OR_PCS_MMD_DIGITAL_CTL1_VR_RST)
+		return -ETIMEDOUT;
+
+	return 0;
+#endif
 }
 
 static int __maybe_unused be_xgbe_phy_soft_reset(struct xgbe_prv_data *pdata)
 {
 	int count, ret;
-	DBGPR("%s\n", __FUNCTION__);
+	DBGPR_MDIO("%s\n", __FUNCTION__);
 
 	ret = XMDIO_READ(pdata, MDIO_MMD_PCS, MDIO_CTRL1);
 	if (ret < 0)
@@ -233,7 +310,7 @@ static int be_xgbe_phy_config_aneg(struct xgbe_prv_data *pdata)
 	set_bit(XGBE_LINK_INIT, &pdata->dev_state);
 	pdata->link_check = jiffies;
 
-	DBGPR("%s\n", __FUNCTION__);
+	DBGPR_MDIO("%s\n", __FUNCTION__);
 	reg = XMDIO_READ(pdata, MDIO_MMD_AN, MDIO_CTRL1);
 	if (reg < 0)
 		return reg;
@@ -257,7 +334,7 @@ static int be_xgbe_phy_config_aneg(struct xgbe_prv_data *pdata)
 static int be_xgbe_phy_config_init(struct xgbe_prv_data *pdata)
 {
 	int ret = 0;
-	DBGPR("%s\n", __FUNCTION__);
+	DBGPR_MDIO("%s\n", __FUNCTION__);
 	/* Initialize supported features */
 	pdata->phy.supported = SUPPORTED_Autoneg;
 	pdata->phy.supported |= SUPPORTED_Pause | SUPPORTED_Asym_Pause;
@@ -281,7 +358,7 @@ static int be_xgbe_phy_config_init(struct xgbe_prv_data *pdata)
 	pdata->phy.rx_pause = 0;
 
 	if (pdata->ext_clk) {
-		DBGPR("%s EXT CLOCK\n", __FUNCTION__);
+		DBGPR_MDIO("%s EXT CLOCK\n", __FUNCTION__);
 		/* Switch XGMAC PHY PLL to use extrnal ref clock from pad */
 		ret = XMDIO_READ(pdata, MDIO_MMD_PMAPMD, VR_XS_PMA_MII_Gen5_MPLL_CTRL);
 		ret &= ~(VR_XS_PMA_MII_Gen5_MPLL_CTRL_REF_CLK_SEL_bit);
@@ -304,7 +381,7 @@ static int be_xgbe_phy_config_init(struct xgbe_prv_data *pdata)
 	} while ( (ret & VR_XS_PCS_DIG_CTRL1_VR_RST_Bit) != 0 );
 
 
-			DBGPR("%s %x\n", __FUNCTION__, ret);
+			DBGPR_MDIO("%s %x\n", __FUNCTION__, ret);
 	/*
 	 * Wait for the RST (bit 15) of the “SR XS or PCS MMD Control1” Register is 0.
 	 * This bit is self-cleared when Bits[4:2] in VR XS or PCS MMD Digital
@@ -343,7 +420,7 @@ static int be_xgbe_phy_config_init(struct xgbe_prv_data *pdata)
 static int be_xgbe_phy_aneg_done(struct xgbe_prv_data *pdata)
 {
 	int reg;
-	DBGPR("%s\n", __FUNCTION__);
+	DBGPR_MDIO("%s\n", __FUNCTION__);
 	reg = XMDIO_READ(pdata, MDIO_MMD_AN, MDIO_STAT1);
 	if (reg < 0)
 		return reg;
@@ -416,19 +493,19 @@ static void be_xgbe_phy_read_status(struct xgbe_prv_data *pdata)
 		if (!pdata->phydev->link){
 			pdata->phydev->link = 0;
 			pdata->phy.link &= pdata->phydev->link;
-			DBGPR("%s PHY %x\n", __FUNCTION__, pdata->phy.link);
+			DBGPR_MDIO("%s PHY %x\n", __FUNCTION__, pdata->phy.link);
 		}
 	}
 	reg = XMDIO_READ(pdata, MDIO_MMD_PCS, MDIO_STAT1);
 	pdata->phy.link &= (reg & MDIO_STAT1_LSTATUS) ? 1 : 0;
-	DBGPR("%s PCS %x\n", __FUNCTION__, reg);
+	DBGPR_MDIO("%s PCS %x\n", __FUNCTION__, reg);
 
 	reg = XMDIO_READ(pdata, MDIO_MMD_PMAPMD, MDIO_STAT1);
-	DBGPR("%s PMA %x\n", __FUNCTION__, reg);
+	DBGPR_MDIO("%s PMA %x\n", __FUNCTION__, reg);
 	pdata->phy.link &= (reg & MDIO_STAT1_LSTATUS) ? 1 : 0;
 
 	if (pdata->phy.link) {
-		DBGPR("%s link on\n", __FUNCTION__);
+		DBGPR_MDIO("%s link on\n", __FUNCTION__);
 		if (link_aneg && !be_xgbe_phy_aneg_done(pdata)) {
 			//xgbe_check_link_timeout(pdata);
 			return ;
@@ -441,7 +518,7 @@ static void be_xgbe_phy_read_status(struct xgbe_prv_data *pdata)
 
 		netif_carrier_on(pdata->netdev);
 	} else {
-		DBGPR("%s link off\n", __FUNCTION__);
+		DBGPR_MDIO("%s link off\n", __FUNCTION__);
 		if (test_bit(XGBE_LINK_INIT, &pdata->dev_state)) {
 			//xgbe_check_link_timeout(pdata);
 
@@ -461,7 +538,7 @@ update_link:
 static int be_xgbe_phy_resume(struct xgbe_prv_data *pdata)
 {
 	int ret;
-	DBGPR("%s\n", __FUNCTION__);
+	DBGPR_MDIO("%s\n", __FUNCTION__);
 	//mutex_lock(&phydev->lock);
 
 	ret = XMDIO_READ(pdata, MDIO_MMD_PCS, MDIO_CTRL1);
@@ -483,7 +560,7 @@ static int be_xgbe_phy_suspend(struct xgbe_prv_data *pdata)
 {
 	int ret;
 
-	DBGPR("%s\n", __FUNCTION__);
+	DBGPR_MDIO("%s\n", __FUNCTION__);
 //	mutex_lock(&phydev->lock);
 
 	ret = XMDIO_READ(pdata, MDIO_MMD_PCS, MDIO_CTRL1);

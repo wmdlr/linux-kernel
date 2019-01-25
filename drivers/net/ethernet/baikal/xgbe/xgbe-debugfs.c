@@ -113,148 +113,264 @@
  *     THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <linux/netdevice.h>
-#include <net/dcbnl.h>
+#include <linux/debugfs.h>
+#include <linux/module.h>
+#include <linux/slab.h>
 
 #include "xgbe.h"
 #include "xgbe-common.h"
 
-static int xgbe_dcb_ieee_getets(struct net_device *netdev,
-				struct ieee_ets *ets)
+static ssize_t xgbe_common_read(char __user *buffer, size_t count,
+				loff_t *ppos, unsigned int value)
 {
-	struct xgbe_prv_data *pdata = netdev_priv(netdev);
+	char *buf;
+	ssize_t len;
 
-	/* Set number of supported traffic classes */
-	ets->ets_cap = pdata->hw_feat.tc_cnt;
+	if (*ppos != 0)
+		return 0;
 
-	if (pdata->ets) {
-		ets->cbs = pdata->ets->cbs;
-		memcpy(ets->tc_tx_bw, pdata->ets->tc_tx_bw,
-		       sizeof(ets->tc_tx_bw));
-		memcpy(ets->tc_tsa, pdata->ets->tc_tsa,
-		       sizeof(ets->tc_tsa));
-		memcpy(ets->prio_tc, pdata->ets->prio_tc,
-		       sizeof(ets->prio_tc));
+	buf = kasprintf(GFP_KERNEL, "0x%08x\n", value);
+	if (!buf)
+		return -ENOMEM;
+
+	if (count < strlen(buf)) {
+		kfree(buf);
+		return -ENOSPC;
 	}
 
-	return 0;
+	len = simple_read_from_buffer(buffer, count, ppos, buf, strlen(buf));
+	kfree(buf);
+
+	return len;
 }
 
-static int xgbe_dcb_ieee_setets(struct net_device *netdev,
-				struct ieee_ets *ets)
+static ssize_t xgbe_common_write(const char __user *buffer, size_t count,
+				 loff_t *ppos, unsigned int *value)
 {
-	struct xgbe_prv_data *pdata = netdev_priv(netdev);
-	unsigned int i, tc_ets, tc_ets_weight;
+	char workarea[32];
+	ssize_t len;
+	int ret;
 
-	tc_ets = 0;
-	tc_ets_weight = 0;
-	for (i = 0; i < IEEE_8021QAZ_MAX_TCS; i++) {
+	if (*ppos != 0)
+		return 0;
 
-		if ((ets->tc_tx_bw[i] || ets->tc_tsa[i]) && (i >= pdata->hw_feat.tc_cnt))
-				return -EINVAL;
+	if (count >= sizeof(workarea))
+		return -ENOSPC;
 
-		if (ets->prio_tc[i] >= pdata->hw_feat.tc_cnt)
-			return -EINVAL;
+	len = simple_write_to_buffer(workarea, sizeof(workarea) - 1, ppos,
+				     buffer, count);
+	if (len < 0)
+		return len;
 
-		switch (ets->tc_tsa[i]) {
-		case IEEE_8021QAZ_TSA_STRICT:
-			break;
-		case IEEE_8021QAZ_TSA_ETS:
-			tc_ets = 1;
-			tc_ets_weight += ets->tc_tx_bw[i];
-			break;
+	workarea[len] = '\0';
+	ret = kstrtouint(workarea, 16, value);
+	if (ret)
+		return -EIO;
 
-		default:
-			return -EINVAL;
-		}
-	}
-
-	/* Weights must add up to 100% */
-	if (tc_ets && (tc_ets_weight != 100))
-		return -EINVAL;
-
-	if (!pdata->ets) {
-		pdata->ets = devm_kzalloc(pdata->dev, sizeof(*pdata->ets),
-					  GFP_KERNEL);
-		if (!pdata->ets)
-			return -ENOMEM;
-	}
-
-	memcpy(pdata->ets, ets, sizeof(*pdata->ets));
-
-	pdata->hw_if.config_dcb_tc(pdata);
-
-	return 0;
+	return len;
 }
 
-static int xgbe_dcb_ieee_getpfc(struct net_device *netdev,
-				struct ieee_pfc *pfc)
+static ssize_t xgmac_reg_addr_read(struct file *filp, char __user *buffer,
+				   size_t count, loff_t *ppos)
 {
-	struct xgbe_prv_data *pdata = netdev_priv(netdev);
+	struct xgbe_prv_data *pdata = filp->private_data;
 
-	/* Set number of supported PFC traffic classes */
-	pfc->pfc_cap = pdata->hw_feat.tc_cnt;
-
-	if (pdata->pfc) {
-		pfc->pfc_en = pdata->pfc->pfc_en;
-		pfc->mbc = pdata->pfc->mbc;
-		pfc->delay = pdata->pfc->delay;
-	}
-
-	return 0;
+	return xgbe_common_read(buffer, count, ppos, pdata->debugfs_xgmac_reg);
 }
 
-static int xgbe_dcb_ieee_setpfc(struct net_device *netdev,
-				struct ieee_pfc *pfc)
+static ssize_t xgmac_reg_addr_write(struct file *filp,
+				    const char __user *buffer,
+				    size_t count, loff_t *ppos)
 {
-	struct xgbe_prv_data *pdata = netdev_priv(netdev);
+	struct xgbe_prv_data *pdata = filp->private_data;
 
-	if (!pdata->pfc) {
-		pdata->pfc = devm_kzalloc(pdata->dev, sizeof(*pdata->pfc),
-					  GFP_KERNEL);
-		if (!pdata->pfc)
-			return -ENOMEM;
-	}
-
-	memcpy(pdata->pfc, pfc, sizeof(*pdata->pfc));
-
-	pdata->hw_if.config_dcb_pfc(pdata);
-
-	return 0;
+	return xgbe_common_write(buffer, count, ppos,
+				 &pdata->debugfs_xgmac_reg);
 }
 
-static u8 xgbe_dcb_getdcbx(struct net_device *netdev)
+static ssize_t xgmac_reg_value_read(struct file *filp, char __user *buffer,
+				    size_t count, loff_t *ppos)
 {
-	return DCB_CAP_DCBX_HOST | DCB_CAP_DCBX_VER_IEEE;
+	struct xgbe_prv_data *pdata = filp->private_data;
+	unsigned int value;
+
+	value = XGMAC_IOREAD(pdata, pdata->debugfs_xgmac_reg);
+
+	return xgbe_common_read(buffer, count, ppos, value);
 }
 
-static u8 xgbe_dcb_setdcbx(struct net_device *netdev, u8 dcbx)
+static ssize_t xgmac_reg_value_write(struct file *filp,
+				     const char __user *buffer,
+				     size_t count, loff_t *ppos)
 {
-	struct xgbe_prv_data *pdata = netdev_priv(netdev);
-	u8 support = xgbe_dcb_getdcbx(netdev);
+	struct xgbe_prv_data *pdata = filp->private_data;
+	unsigned int value;
+	ssize_t len;
 
-	if (dcbx & ~support)
-		return 1;
+	len = xgbe_common_write(buffer, count, ppos, &value);
+	if (len < 0)
+		return len;
 
-	if ((dcbx & support) != support)
-		return 1;
+	XGMAC_IOWRITE(pdata, pdata->debugfs_xgmac_reg, value);
 
-	return 0;
+	return len;
 }
 
-static const struct dcbnl_rtnl_ops xgbe_dcbnl_ops = {
-	/* IEEE 802.1Qaz std */
-	.ieee_getets = xgbe_dcb_ieee_getets,
-	.ieee_setets = xgbe_dcb_ieee_setets,
-	.ieee_getpfc = xgbe_dcb_ieee_getpfc,
-	.ieee_setpfc = xgbe_dcb_ieee_setpfc,
-
-	/* DCBX configuration */
-	.getdcbx     = xgbe_dcb_getdcbx,
-	.setdcbx     = xgbe_dcb_setdcbx,
+static const struct file_operations xgmac_reg_addr_fops = {
+	.owner = THIS_MODULE,
+	.open = simple_open,
+	.read =  xgmac_reg_addr_read,
+	.write = xgmac_reg_addr_write,
 };
 
-const struct dcbnl_rtnl_ops *xgbe_get_dcbnl_ops(void)
+static const struct file_operations xgmac_reg_value_fops = {
+	.owner = THIS_MODULE,
+	.open = simple_open,
+	.read =  xgmac_reg_value_read,
+	.write = xgmac_reg_value_write,
+};
+
+static ssize_t xpcs_mmd_read(struct file *filp, char __user *buffer,
+			     size_t count, loff_t *ppos)
 {
-	return &xgbe_dcbnl_ops;
+	struct xgbe_prv_data *pdata = filp->private_data;
+
+	return xgbe_common_read(buffer, count, ppos, pdata->debugfs_xpcs_mmd);
 }
+
+static ssize_t xpcs_mmd_write(struct file *filp, const char __user *buffer,
+			      size_t count, loff_t *ppos)
+{
+	struct xgbe_prv_data *pdata = filp->private_data;
+
+	return xgbe_common_write(buffer, count, ppos,
+				 &pdata->debugfs_xpcs_mmd);
+}
+
+static ssize_t xpcs_reg_addr_read(struct file *filp, char __user *buffer,
+				  size_t count, loff_t *ppos)
+{
+	struct xgbe_prv_data *pdata = filp->private_data;
+
+	return xgbe_common_read(buffer, count, ppos, pdata->debugfs_xpcs_reg);
+}
+
+static ssize_t xpcs_reg_addr_write(struct file *filp, const char __user *buffer,
+				   size_t count, loff_t *ppos)
+{
+	struct xgbe_prv_data *pdata = filp->private_data;
+
+	return xgbe_common_write(buffer, count, ppos,
+				 &pdata->debugfs_xpcs_reg);
+}
+
+static ssize_t xpcs_reg_value_read(struct file *filp, char __user *buffer,
+				   size_t count, loff_t *ppos)
+{
+	struct xgbe_prv_data *pdata = filp->private_data;
+	unsigned int value;
+
+	value = XMDIO_READ(pdata, pdata->debugfs_xpcs_mmd,
+			   pdata->debugfs_xpcs_reg);
+
+	return xgbe_common_read(buffer, count, ppos, value);
+}
+
+static ssize_t xpcs_reg_value_write(struct file *filp,
+				    const char __user *buffer,
+				    size_t count, loff_t *ppos)
+{
+	struct xgbe_prv_data *pdata = filp->private_data;
+	unsigned int value;
+	ssize_t len;
+
+	len = xgbe_common_write(buffer, count, ppos, &value);
+	if (len < 0)
+		return len;
+
+	XMDIO_WRITE(pdata, pdata->debugfs_xpcs_mmd, pdata->debugfs_xpcs_reg,
+		    value);
+
+	return len;
+}
+
+static const struct file_operations xpcs_mmd_fops = {
+	.owner = THIS_MODULE,
+	.open = simple_open,
+	.read =  xpcs_mmd_read,
+	.write = xpcs_mmd_write,
+};
+
+static const struct file_operations xpcs_reg_addr_fops = {
+	.owner = THIS_MODULE,
+	.open = simple_open,
+	.read =  xpcs_reg_addr_read,
+	.write = xpcs_reg_addr_write,
+};
+
+static const struct file_operations xpcs_reg_value_fops = {
+	.owner = THIS_MODULE,
+	.open = simple_open,
+	.read =  xpcs_reg_value_read,
+	.write = xpcs_reg_value_write,
+};
+
+void xgbe_debugfs_init(struct xgbe_prv_data *pdata)
+{
+	struct dentry *pfile;
+	char *buf;
+
+	/* Set defaults */
+	pdata->debugfs_xgmac_reg = 0;
+	pdata->debugfs_xpcs_mmd = 1;
+	pdata->debugfs_xpcs_reg = 0;
+
+	buf = kasprintf(GFP_KERNEL, "be-xgbe-%s", pdata->netdev->name);
+	if (!buf)
+		return;
+
+	pdata->xgbe_debugfs = debugfs_create_dir(buf, NULL);
+	if (!pdata->xgbe_debugfs) {
+		netdev_err(pdata->netdev, "debugfs_create_dir failed\n");
+		goto out;
+	}
+
+	pfile = debugfs_create_file("xgmac_register", 0600,
+				    pdata->xgbe_debugfs, pdata,
+				    &xgmac_reg_addr_fops);
+	if (!pfile)
+		netdev_err(pdata->netdev, "debugfs_create_file failed\n");
+
+	pfile = debugfs_create_file("xgmac_register_value", 0600,
+				    pdata->xgbe_debugfs, pdata,
+				    &xgmac_reg_value_fops);
+	if (!pfile)
+		netdev_err(pdata->netdev, "debugfs_create_file failed\n");
+
+	pfile = debugfs_create_file("xpcs_mmd", 0600,
+				    pdata->xgbe_debugfs, pdata,
+				    &xpcs_mmd_fops);
+	if (!pfile)
+		netdev_err(pdata->netdev, "debugfs_create_file failed\n");
+
+	pfile = debugfs_create_file("xpcs_register", 0600,
+				    pdata->xgbe_debugfs, pdata,
+				    &xpcs_reg_addr_fops);
+	if (!pfile)
+		netdev_err(pdata->netdev, "debugfs_create_file failed\n");
+
+	pfile = debugfs_create_file("xpcs_register_value", 0600,
+				    pdata->xgbe_debugfs, pdata,
+				    &xpcs_reg_value_fops);
+	if (!pfile)
+		netdev_err(pdata->netdev, "debugfs_create_file failed\n");
+out:
+	kfree(buf);
+}
+
+void xgbe_debugfs_exit(struct xgbe_prv_data *pdata)
+{
+	debugfs_remove_recursive(pdata->xgbe_debugfs);
+	pdata->xgbe_debugfs = NULL;
+}
+

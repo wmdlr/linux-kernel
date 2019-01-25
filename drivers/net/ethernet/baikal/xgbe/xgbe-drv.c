@@ -626,17 +626,17 @@ static void xgbe_napi_enable(struct xgbe_prv_data *pdata, unsigned int add)
 		channel = pdata->channel;
 		for (i = 0; i < pdata->channel_count; i++, channel++) {
 			if (add) {
-				netif_napi_add(pdata->netdev, &channel->napi_rx, \
-					       xgbe_one_rx_poll, 4096);//NAPI_POLL_WEIGHT);
-				netif_napi_add(pdata->netdev, &channel->napi_tx, \
-					       xgbe_one_tx_poll, 4096);//NAPI_POLL_WEIGHT);
+				netif_napi_add(pdata->netdev, &channel->napi_rx,
+					       xgbe_one_rx_poll, NAPI_POLL_WEIGHT);
+				netif_napi_add(pdata->netdev, &channel->napi_tx,
+					       xgbe_one_tx_poll, NAPI_POLL_WEIGHT);
 			}
 			napi_enable(&channel->napi_rx);
 			napi_enable(&channel->napi_tx);
 		}
 	} else {
 		if (add)
-			netif_napi_add(pdata->netdev, &pdata->napi, xgbe_all_poll, 4096);//NAPI_POLL_WEIGHT);
+			netif_napi_add(pdata->netdev, &pdata->napi, xgbe_all_poll, NAPI_POLL_WEIGHT);
 
 		napi_enable(&pdata->napi);
 	}
@@ -2000,7 +2000,7 @@ read_again:
 
 		if (error || packet->errors) {
 			if (packet->errors)
-				pr_err("error in received packet\n");
+				DBGPR("error in received packet: 0x%x\n", packet->errors);
 			pstats->rxrunerror++;
 			/*if (skb)
 				xgbe_print_pkt(netdev, skb, false);
@@ -2145,8 +2145,6 @@ static int xgbe_one_rx_poll(struct napi_struct *napi, int budget)
 
 	DBGPR("-->xgbe_one_poll: budget=%d\n", budget);
 
-	budget /= 2;
-
 	/* Process Rx ring next */
 	do {
 		last_processed = processed;
@@ -2268,3 +2266,4 @@ void xgbe_print_pkt(struct net_device *netdev, struct sk_buff *skb, bool tx_rx)
 
 	netdev_alert(netdev, "\n************** SKB dump ****************\n");
 }
+

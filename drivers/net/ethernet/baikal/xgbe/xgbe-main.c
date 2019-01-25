@@ -135,16 +135,24 @@ MODULE_LICENSE("Dual BSD/GPL");
 MODULE_VERSION(XGBE_DRV_VERSION);
 MODULE_DESCRIPTION(XGBE_DRV_DESC);
 
+static int debug = -1;
+module_param(debug, int, S_IWUSR | S_IRUGO);
+MODULE_PARM_DESC(debug, " Network interface message level setting");
+
+static const u32 default_msg_level = (NETIF_MSG_LINK | NETIF_MSG_IFDOWN |
+				      NETIF_MSG_IFUP);
+
 static void xgbe_default_config(struct xgbe_prv_data *pdata)
 {
+	DBGPR("-->xgbe_default_config\n");
 
-	pdata->pblx8 = DMA_PBL_X8_ENABLE;
+	pdata->pblx8 = DMA_PBL_X8_DISABLE;
 	pdata->tx_sf_mode = MTL_TSF_ENABLE;
-	pdata->tx_threshold = MTL_TX_THRESHOLD_64;
+	pdata->tx_threshold = MTL_TX_THRESHOLD_192;
 	pdata->tx_pbl = DMA_PBL_16;
 	pdata->tx_osp_mode = DMA_OSP_ENABLE;
 	pdata->rx_sf_mode = MTL_RSF_DISABLE;
-	pdata->rx_threshold = MTL_RX_THRESHOLD_64;
+	pdata->rx_threshold = MTL_RX_THRESHOLD_128;
 	pdata->rx_pbl = DMA_PBL_16;
 	pdata->pause_autoneg = 1;
 	pdata->tx_pause = 1;
@@ -154,6 +162,7 @@ static void xgbe_default_config(struct xgbe_prv_data *pdata)
 	pdata->default_autoneg = AUTONEG_DISABLE;
 	pdata->default_speed = SPEED_10000;
 
+	DBGPR("<--xgbe_default_config\n");
 }
 
 static void xgbe_init_all_fptrs(struct xgbe_prv_data *pdata)
@@ -166,16 +175,18 @@ static void xgbe_init_all_fptrs(struct xgbe_prv_data *pdata)
 static int xgbe_probe(struct platform_device *pdev)
 {
 	struct xgbe_prv_data *pdata;
-	struct xgbe_hw_if *hw_if;
-	struct xgbe_desc_if *desc_if;
 	struct net_device *netdev;
 	struct device *dev = &pdev->dev;
 	struct resource *res;
 	const u8 *mac_addr;
 	unsigned int i;
+	enum dev_dma_attr attr;
 	int ret;
 
-	netdev = alloc_etherdev_mq(sizeof(struct xgbe_prv_data), XGBE_MAX_DMA_CHANNELS);
+	DBGPR("--> xgbe_probe\n");
+
+	netdev = alloc_etherdev_mq(sizeof(struct xgbe_prv_data),
+				   XGBE_MAX_DMA_CHANNELS);
 	if (!netdev) {
 		dev_err(dev, "alloc_etherdev failed\n");
 		ret = -ENOMEM;
@@ -193,20 +204,24 @@ static int xgbe_probe(struct platform_device *pdev)
 	mutex_init(&pdata->rss_mutex);
 	spin_lock_init(&pdata->tstamp_lock);
 
+	pdata->msg_enable = netif_msg_init(debug, default_msg_level);
+
 	set_bit(XGBE_DOWN, &pdata->dev_state);
 
 	/* Set and validate the number of descriptors for a ring */
 	BUILD_BUG_ON_NOT_POWER_OF_2(XGBE_TX_DESC_CNT);
 	pdata->tx_desc_count = XGBE_TX_DESC_CNT;
 	if (pdata->tx_desc_count & (pdata->tx_desc_count - 1)) {
-		dev_err(dev, "tx descriptor count (%d) is not valid\n", pdata->tx_desc_count);
+		dev_err(dev, "tx descriptor count (%d) is not valid\n",
+			pdata->tx_desc_count);
 		ret = -EINVAL;
 		goto err_io;
 	}
 	BUILD_BUG_ON_NOT_POWER_OF_2(XGBE_RX_DESC_CNT);
 	pdata->rx_desc_count = XGBE_RX_DESC_CNT;
 	if (pdata->rx_desc_count & (pdata->rx_desc_count - 1)) {
-		dev_err(dev, "rx descriptor count (%d) is not valid\n", pdata->rx_desc_count);
+		dev_err(dev, "rx descriptor count (%d) is not valid\n",
+			pdata->rx_desc_count);
 		ret = -EINVAL;
 		goto err_io;
 	}
@@ -237,7 +252,8 @@ static int xgbe_probe(struct platform_device *pdev)
 		ret = PTR_ERR(pdata->xgmac_regs);
 		goto err_io;
 	}
-	DBGPR("  xgmac_regs = %p\n", pdata->xgmac_regs);
+	if (netif_msg_probe(pdata))
+		dev_dbg(dev, "xgmac_regs = %p\n", pdata->xgmac_regs);
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 1);
 	pdata->xpcs_regs = devm_ioremap_resource(dev, res);
@@ -246,68 +262,16 @@ static int xgbe_probe(struct platform_device *pdev)
 		ret = PTR_ERR(pdata->xpcs_regs);
 		goto err_io;
 	}
-	DBGPR("  xpcs_regs  = %p\n", pdata->xpcs_regs);
-
-	/* Set the DMA mask */
-	ret = dma_set_mask_and_coherent(dev, DMA_BIT_MASK(32));
-	if (ret) {
-		dev_err(dev, "dma_set_mask_and_coherent failed\n");
-		goto err_io;
-	}
-
-	if (of_property_read_bool(dev->of_node, "dma-coherent")) {
-		pdata->axdomain = XGBE_DMA_OS_AXDOMAIN;
-		pdata->arcache = XGBE_DMA_OS_ARCACHE;
-		pdata->awcache = XGBE_DMA_OS_AWCACHE;
-	} else {
-		pdata->axdomain = XGBE_DMA_SYS_AXDOMAIN;
-		pdata->arcache = XGBE_DMA_SYS_ARCACHE;
-		pdata->awcache = XGBE_DMA_SYS_AWCACHE;
-	}
-
-	/* Check for per channel interrupt support */
-	if (of_property_read_bool(dev->of_node, XGBE_DMA_IRQS))
-		pdata->per_channel_irq = 1;
-
-	ret = platform_get_irq(pdev, 0);
-	if (ret < 0) {
-		dev_err(dev, "platform_get_irq 0 failed\n");
-		goto err_io;
-	}
-	pdata->dev_irq = ret;
-
-	/* Get the auto-negotiation interrupt */
-	//ret = platform_get_irq(phy_pdev, phy_irqnum++);
-	//if (ret < 0) {
-	//	dev_err(dev, "platform_get_irq phy 0 failed\n");
-	//	goto err_io;
-	//}
-	//pdata->an_irq = ret;
-//
-
-
-	netdev->irq = pdata->dev_irq;
-	netdev->base_addr = (unsigned long)pdata->xgmac_regs;
-
-	/* Set all the function pointers */
-	xgbe_init_all_fptrs(pdata);
-	hw_if = &pdata->hw_if;
-	desc_if = &pdata->desc_if;
-
-	/* Issue software reset to device */
-	hw_if->exit(pdata);
-
-	/* Populate the hardware features */
-	xgbe_get_all_hw_features(pdata);
+	if (netif_msg_probe(pdata))
+		dev_dbg(dev, "xpcs_regs  = %p\n", pdata->xpcs_regs);
 
 	/* Retrieve the MAC address */
 	mac_addr = of_get_mac_address(dev->of_node);
 	if (!mac_addr) {
-		dev_err(dev, "invalid mac address for this device\n");
+		dev_err(dev, "invalid mac-address for this device\n");
 		ret = -EINVAL;
 		goto err_io;
 	}
-	memcpy(netdev->dev_addr, mac_addr, netdev->addr_len);
 
 	/* Retrieve the PHY mode - it must be "xgmii" */
 	pdata->phy_mode = of_get_phy_mode(dev->of_node);
@@ -317,8 +281,57 @@ static int xgbe_probe(struct platform_device *pdev)
 		goto err_io;
 	}
 
+	/* Check for per channel interrupt support */
+	if (of_property_read_bool(dev->of_node, XGBE_DMA_IRQS))
+		pdata->per_channel_irq = 1;
+
+	/* Set the DMA coherency values */
+	attr = device_get_dma_attr(dev);
+	if (attr == DEV_DMA_NOT_SUPPORTED) {
+		dev_err(dev, "DMA is not supported");
+		goto err_io;
+	}
+	if (attr == DEV_DMA_COHERENT) {
+		pdata->axdomain = XGBE_DMA_OS_AXDOMAIN;
+		pdata->arcache = XGBE_DMA_OS_ARCACHE;
+		pdata->awcache = XGBE_DMA_OS_AWCACHE;
+	} else {
+		pdata->axdomain = XGBE_DMA_SYS_AXDOMAIN;
+		pdata->arcache = XGBE_DMA_SYS_ARCACHE;
+		pdata->awcache = XGBE_DMA_SYS_AWCACHE;
+	}
+
+	/* Get the device interrupt */
+	ret = platform_get_irq(pdev, 0);
+	if (ret < 0) {
+		dev_err(dev, "platform_get_irq 0 failed\n");
+		goto err_io;
+	}
+	pdata->dev_irq = ret;
+
+	netdev->irq = pdata->dev_irq;
+	netdev->base_addr = (unsigned long)pdata->xgmac_regs;
+	memcpy(netdev->dev_addr, mac_addr, netdev->addr_len);
+
+	/* Set all the function pointers */
+	xgbe_init_all_fptrs(pdata);
+
+	/* Issue software reset to device */
+	pdata->hw_if.exit(pdata);
+
+	/* Populate the hardware features */
+	xgbe_get_all_hw_features(pdata);
+
 	/* Set default configuration data */
 	xgbe_default_config(pdata);
+
+	/* Set the DMA mask */
+	ret = dma_set_mask_and_coherent(dev,
+					DMA_BIT_MASK(pdata->hw_feat.dma_width));
+	if (ret) {
+		dev_err(dev, "dma_set_mask_and_coherent failed\n");
+		goto err_io;
+	}
 
 	/* Calculate the number of Tx and Rx rings to be created
 	 *  -Tx (DMA) Channels map 1-to-1 to Tx Queues so set
@@ -327,7 +340,8 @@ static int xgbe_probe(struct platform_device *pdev)
 	 *  -Rx (DMA) Channels do not map 1-to-1 so use the actual
 	 *   number of Rx queues
 	 */
-	pdata->tx_ring_count = min_t(unsigned int, num_online_cpus(), pdata->hw_feat.tx_ch_cnt);
+	pdata->tx_ring_count = min_t(unsigned int, num_online_cpus(),
+				     pdata->hw_feat.tx_ch_cnt);
 	pdata->tx_q_count = pdata->tx_ring_count;
 	ret = netif_set_real_num_tx_queues(netdev, pdata->tx_ring_count);
 	if (ret) {
@@ -335,7 +349,9 @@ static int xgbe_probe(struct platform_device *pdev)
 		goto err_io;
 	}
 
-	pdata->rx_ring_count = min_t(unsigned int, netif_get_num_default_rss_queues(), pdata->hw_feat.rx_ch_cnt);
+	pdata->rx_ring_count = min_t(unsigned int,
+				     netif_get_num_default_rss_queues(),
+				     pdata->hw_feat.rx_ch_cnt);
 	pdata->rx_q_count = pdata->hw_feat.rx_q_cnt;
 	ret = netif_set_real_num_rx_queues(netdev, pdata->rx_ring_count);
 	if (ret) {
@@ -347,7 +363,8 @@ static int xgbe_probe(struct platform_device *pdev)
 	netdev_rss_key_fill(pdata->rss_key, sizeof(pdata->rss_key));
 
 	for (i = 0; i < XGBE_RSS_MAX_TABLE_SIZE; i++)
-		XGMAC_SET_BITS(pdata->rss_table[i], MAC_RSSDR, DMCH, i % pdata->rx_ring_count);
+		XGMAC_SET_BITS(pdata->rss_table[i], MAC_RSSDR, DMCH,
+			       i % pdata->rx_ring_count);
 
 	XGMAC_SET_BITS(pdata->rss_options, MAC_RSSCR, IP2TE, 1);
 	XGMAC_SET_BITS(pdata->rss_options, MAC_RSSCR, TCP4TE, 1);
@@ -364,18 +381,33 @@ static int xgbe_probe(struct platform_device *pdev)
 #endif
 
 	/* Set device features */
-	netdev->hw_features = NETIF_F_SG | NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM | NETIF_F_RXCSUM | /*NETIF_F_LOOPBACK |*/
-	     NETIF_F_TSO | NETIF_F_TSO6 | NETIF_F_GRO | NETIF_F_HW_VLAN_CTAG_RX | NETIF_F_HW_VLAN_CTAG_TX | NETIF_F_HW_VLAN_CTAG_FILTER;
+	netdev->hw_features = NETIF_F_SG |
+			      NETIF_F_IP_CSUM |
+			      NETIF_F_IPV6_CSUM |
+			      NETIF_F_RXCSUM |
+			      NETIF_F_TSO |
+			      NETIF_F_TSO6 |
+			      NETIF_F_GRO |
+			      NETIF_F_HW_VLAN_CTAG_RX |
+			      NETIF_F_HW_VLAN_CTAG_TX |
+			      NETIF_F_HW_VLAN_CTAG_FILTER;
 
 	if (pdata->hw_feat.rss)
 		netdev->hw_features |= NETIF_F_RXHASH;
 
-	netdev->vlan_features |= NETIF_F_SG | NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM | NETIF_F_TSO | NETIF_F_TSO6;
+	netdev->vlan_features |= NETIF_F_SG |
+				 NETIF_F_IP_CSUM |
+				 NETIF_F_IPV6_CSUM |
+				 NETIF_F_TSO |
+				 NETIF_F_TSO6;
 
 	netdev->features |= netdev->hw_features;
 	pdata->netdev_features = netdev->features;
 
 	netdev->priv_flags |= IFF_UNICAST_FLT;
+
+	/* Use default watchdog timeout */
+	netdev->watchdog_timeo = 0;
 
 	xgbe_init_rx_coalesce(pdata);
 	xgbe_init_tx_coalesce(pdata);
@@ -406,6 +438,7 @@ static int xgbe_probe(struct platform_device *pdev)
 
 	netdev_notice(netdev, "net device enabled\n");
 
+	DBGPR("<-- xgbe_probe\n");
 
 	return 0;
 
@@ -413,8 +446,6 @@ err_netdev:
 	unregister_netdev(netdev);
 
 err_io:
-	free_netdev(netdev);
-
 	free_netdev(netdev);
 
 err_alloc:
@@ -428,6 +459,7 @@ static int xgbe_remove(struct platform_device *pdev)
 	struct net_device *netdev = platform_get_drvdata(pdev);
 	struct xgbe_prv_data *pdata = netdev_priv(netdev);
 
+	DBGPR("-->xgbe_remove\n");
 
 	xgbe_debugfs_exit(pdata);
 
@@ -440,17 +472,19 @@ static int xgbe_remove(struct platform_device *pdev)
 
 	free_netdev(netdev);
 
+	DBGPR("<--xgbe_remove\n");
 
 	return 0;
 }
 
-#ifdef CONFIG_PM
+#ifdef CONFIG_PM_SLEEP
 static int xgbe_suspend(struct device *dev)
 {
 	struct net_device *netdev = dev_get_drvdata(dev);
 	struct xgbe_prv_data *pdata = netdev_priv(netdev);
 	int ret = 0;
 
+	DBGPR("-->xgbe_suspend\n");
 
 	if (netif_running(netdev))
 		ret = xgbe_powerdown(netdev, XGMAC_DRIVER_CONTEXT);
@@ -459,6 +493,7 @@ static int xgbe_suspend(struct device *dev)
 	pdata->lpm_ctrl |= MDIO_CTRL1_LPOWER;
 	XMDIO_WRITE(pdata, MDIO_MMD_PCS, MDIO_CTRL1, pdata->lpm_ctrl);
 
+	DBGPR("<--xgbe_suspend\n");
 
 	return ret;
 }
@@ -469,6 +504,7 @@ static int xgbe_resume(struct device *dev)
 	struct xgbe_prv_data *pdata = netdev_priv(netdev);
 	int ret = 0;
 
+	DBGPR("-->xgbe_resume\n");
 
 	pdata->lpm_ctrl &= ~MDIO_CTRL1_LPOWER;
 	XMDIO_WRITE(pdata, MDIO_MMD_PCS, MDIO_CTRL1, pdata->lpm_ctrl);
@@ -476,23 +512,29 @@ static int xgbe_resume(struct device *dev)
 	if (netif_running(netdev))
 		ret = xgbe_powerup(netdev, XGMAC_DRIVER_CONTEXT);
 
+	DBGPR("<--xgbe_resume\n");
 
 	return ret;
 }
-#endif /* CONFIG_PM */
+#endif /* CONFIG_PM_SLEEP */
 
+#ifdef CONFIG_OF
 static const struct of_device_id xgbe_of_match[] = {
 	{ .compatible = "be,baikal-xgbe", },
 	{},
 };
 
 MODULE_DEVICE_TABLE(of, xgbe_of_match);
+#endif
+
 static SIMPLE_DEV_PM_OPS(xgbe_pm_ops, xgbe_suspend, xgbe_resume);
 
 static struct platform_driver xgbe_driver = {
 	.driver = {
 		.name = "be-xgbe",
+#ifdef CONFIG_OF
 		.of_match_table = xgbe_of_match,
+#endif
 		.pm = &xgbe_pm_ops,
 	},
 	.probe = xgbe_probe,
@@ -500,3 +542,4 @@ static struct platform_driver xgbe_driver = {
 };
 
 module_platform_driver(xgbe_driver);
+

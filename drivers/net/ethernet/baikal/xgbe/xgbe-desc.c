@@ -207,6 +207,7 @@ static int xgbe_init_ring(struct xgbe_prv_data *pdata,
 	if (!ring->rdata)
 		return -ENOMEM;
 
+	DBGPR("<--xgbe_init_ring\n");
 
 	return 0;
 }
@@ -256,7 +257,7 @@ static int xgbe_alloc_pages(struct xgbe_prv_data *pdata,
 	int ret;
 
 	/* Try to obtain pages, decreasing order if necessary */
-	gfp |= __GFP_COLD | __GFP_COMP;
+	gfp |= __GFP_COLD | __GFP_COMP | __GFP_NOWARN;
 	while (order >= 0) {
 		pages = alloc_pages(gfp, order);
 		if (pages)
@@ -619,3 +620,4 @@ void xgbe_init_function_ptrs_desc(struct xgbe_desc_if *desc_if)
 
 	DBGPR("<--xgbe_init_function_ptrs_desc\n");
 }
+

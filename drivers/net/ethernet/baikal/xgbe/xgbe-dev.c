@@ -707,6 +707,8 @@ static int xgbe_set_promiscuous_mode(struct xgbe_prv_data *pdata,
 	if (XGMAC_IOREAD_BITS(pdata, MAC_PFR, PR) == val)
 		return 0;
 
+	netif_dbg(pdata, drv, pdata->netdev, "%s promiscuous mode\n",
+		  enable ? "entering" : "leaving");
 	XGMAC_IOWRITE_BITS(pdata, MAC_PFR, PR, val);
 
 	return 0;
@@ -720,6 +722,8 @@ static int xgbe_set_all_multicast_mode(struct xgbe_prv_data *pdata,
 	if (XGMAC_IOREAD_BITS(pdata, MAC_PFR, PM) == val)
 		return 0;
 
+	netif_dbg(pdata, drv, pdata->netdev, "%s allmulti mode\n",
+		  enable ? "entering" : "leaving");
 	XGMAC_IOWRITE_BITS(pdata, MAC_PFR, PM, val);
 
 	return 0;
@@ -744,6 +748,9 @@ static void xgbe_set_mac_reg(struct xgbe_prv_data *pdata,
 		mac_addr[0] = ha->addr[4];
 		mac_addr[1] = ha->addr[5];
 
+		netif_dbg(pdata, drv, pdata->netdev,
+			  "adding mac address %pM at %#x\n",
+			  ha->addr, *mac_reg);
 
 		XGMAC_SET_BITS(mac_addr_hi, MAC_MACA1HR, AE, 1);
 	}
@@ -951,7 +958,6 @@ static int xgbe_enable_loopback(struct xgbe_prv_data *pdata)
        return 0;
 }
 
-
 static int xgbe_enable_rx_vlan_stripping(struct xgbe_prv_data *pdata)
 {
 	/* Put the VLAN tag in the Rx descriptor */
@@ -1108,6 +1114,7 @@ static void xgbe_tx_desc_init(struct xgbe_channel *channel)
 	XGMAC_DMA_IOWRITE(channel, DMA_CH_TDLR_LO,
 			  lower_32_bits(rdata->rdesc_dma));
 
+	DBGPR("<--tx_desc_init\n");
 }
 
 static void xgbe_rx_desc_reset(struct xgbe_prv_data *pdata,
@@ -1318,6 +1325,8 @@ static void xgbe_config_dcb_tc(struct xgbe_prv_data *pdata)
 	for (i = 0; i < pdata->hw_feat.tc_cnt; i++) {
 		switch (ets->tc_tsa[i]) {
 		case IEEE_8021QAZ_TSA_STRICT:
+			netif_dbg(pdata, drv, pdata->netdev,
+				  "TC%u using SP\n", i);
 			XGMAC_MTL_IOWRITE_BITS(pdata, i, MTL_TC_ETSCR, TSA,
 					       MTL_TSA_SP);
 			break;
@@ -1325,6 +1334,8 @@ static void xgbe_config_dcb_tc(struct xgbe_prv_data *pdata)
 			weight = total_weight * ets->tc_tx_bw[i] / 100;
 			weight = clamp(weight, min_weight, total_weight);
 
+			netif_dbg(pdata, drv, pdata->netdev,
+				  "TC%u using DWRR (weight %u)\n", i, weight);
 			XGMAC_MTL_IOWRITE_BITS(pdata, i, MTL_TC_ETSCR, TSA,
 					       MTL_TSA_ETS);
 			XGMAC_MTL_IOWRITE_BITS(pdata, i, MTL_TC_QWR, QW,
@@ -1353,6 +1364,8 @@ static void xgbe_config_dcb_pfc(struct xgbe_prv_data *pdata)
 		}
 		mask &= 0xff;
 
+		netif_dbg(pdata, drv, pdata->netdev, "TC%u PFC mask=%#x\n",
+			  tc, mask);
 		reg = MTL_TCPM0R + (MTL_TCPM_INC * (tc / MTL_TCPM_TC_PER_REG));
 		reg_val = XGMAC_IOREAD(pdata, reg);
 
@@ -1450,6 +1463,9 @@ static void xgbe_dev_xmit(struct xgbe_channel *channel)
 	/* Create a context descriptor if this is a TSO packet */
 	if (tso_context || vlan_context) {
 		if (tso_context) {
+			netif_dbg(pdata, tx_queued, pdata->netdev,
+				  "TSO context descriptor, mss=%u\n",
+				  packet->mss);
 
 			/* Set the MSS size */
 			XGMAC_SET_BITS_LE(rdesc->desc2, TX_CONTEXT_DESC2,
@@ -1467,6 +1483,9 @@ static void xgbe_dev_xmit(struct xgbe_channel *channel)
 		}
 
 		if (vlan_context) {
+			netif_dbg(pdata, tx_queued, pdata->netdev,
+				  "VLAN context descriptor, ctag=%u\n",
+				  packet->vlan_ctag);
 
 			/* Mark it as a CONTEXT descriptor */
 			XGMAC_SET_BITS_LE(rdesc->desc3, TX_CONTEXT_DESC3,
@@ -1696,6 +1715,7 @@ static int xgbe_dev_read(struct xgbe_channel *channel)
 	/* Check for errors (only valid in last descriptor) */
 	err = XGMAC_GET_BITS_LE(rdesc->desc3, RX_NORMAL_DESC3, ES);
 	etlt = XGMAC_GET_BITS_LE(rdesc->desc3, RX_NORMAL_DESC3, ETLT);
+	netif_dbg(pdata, rx_status, netdev, "err=%u, etlt=%#x\n", err, etlt);
 
 	if (!err || !etlt) {
 		/* No error if err is 0 or etlt is 0 */
@@ -1706,6 +1726,8 @@ static int xgbe_dev_read(struct xgbe_channel *channel)
 			packet->vlan_ctag = XGMAC_GET_BITS_LE(rdesc->desc0,
 							      RX_NORMAL_DESC0,
 							      OVT);
+			netif_dbg(pdata, rx_status, netdev, "vlan-ctag=%#06x\n",
+				  packet->vlan_ctag);
 		}
 	} else {
 		if ((etlt == 0x05) || (etlt == 0x06))
@@ -1877,8 +1899,17 @@ static void xgbe_config_dma_bus(struct xgbe_prv_data *pdata)
 	XGMAC_IOWRITE_BITS(pdata, DMA_SBMR, EAME, 1);
 
 	/* Set the System Bus mode */
-	XGMAC_IOWRITE_BITS(pdata, DMA_SBMR, UNDEF, 1);
-	XGMAC_IOWRITE_BITS(pdata, DMA_SBMR, BLEN_16, 1);
+	XGMAC_IOWRITE_BITS(pdata, DMA_SBMR, UNDEF,    1);
+	XGMAC_IOWRITE_BITS(pdata, DMA_SBMR, BLEN_4,   1);
+	XGMAC_IOWRITE_BITS(pdata, DMA_SBMR, BLEN_8,   1);
+	XGMAC_IOWRITE_BITS(pdata, DMA_SBMR, BLEN_16,  1);
+	XGMAC_IOWRITE_BITS(pdata, DMA_SBMR, BLEN_32,  1);
+	XGMAC_IOWRITE_BITS(pdata, DMA_SBMR, BLEN_64,  1);
+	XGMAC_IOWRITE_BITS(pdata, DMA_SBMR, BLEN_128, 1);
+	XGMAC_IOWRITE_BITS(pdata, DMA_SBMR, BLEN_256, 1);
+
+	XGMAC_IOWRITE_BITS(pdata, DMA_SBMR, RD_OSR_LMT, 31);
+	XGMAC_IOWRITE_BITS(pdata, DMA_SBMR, WR_OSR_LMT, 31);
 }
 
 static void xgbe_config_dma_cache(struct xgbe_prv_data *pdata)
@@ -1960,8 +1991,9 @@ static void xgbe_config_tx_fifo_size(struct xgbe_prv_data *pdata)
 	for (i = 0; i < pdata->tx_q_count; i++)
 		XGMAC_MTL_IOWRITE_BITS(pdata, i, MTL_Q_TQOMR, TQS, fifo_size);
 
-	netdev_notice(pdata->netdev, "%d Tx queues, %d byte fifo per queue\n",
-		      pdata->tx_q_count, ((fifo_size + 1) * 256));
+	netif_info(pdata, drv, pdata->netdev,
+		   "%d Tx hardware queues, %d byte fifo per queue\n",
+		   pdata->tx_q_count, ((fifo_size + 1) * 256));
 }
 
 static void xgbe_config_rx_fifo_size(struct xgbe_prv_data *pdata)
@@ -1975,7 +2007,9 @@ static void xgbe_config_rx_fifo_size(struct xgbe_prv_data *pdata)
 	for (i = 0; i < pdata->rx_q_count; i++)
 		XGMAC_MTL_IOWRITE_BITS(pdata, i, MTL_Q_RQOMR, RQS, fifo_size);
 
-	netdev_notice(pdata->netdev, "%d Rx queues, %d byte fifo per queue\n", pdata->rx_q_count, ((fifo_size + 1) * 256));
+	netif_info(pdata, drv, pdata->netdev,
+		   "%d Rx hardware queues, %d byte fifo per queue\n",
+		   pdata->rx_q_count, ((fifo_size + 1) * 256));
 }
 
 static void xgbe_config_queue_mapping(struct xgbe_prv_data *pdata)
@@ -1994,12 +2028,16 @@ static void xgbe_config_queue_mapping(struct xgbe_prv_data *pdata)
 
 	for (i = 0, queue = 0; i < pdata->hw_feat.tc_cnt; i++) {
 		for (j = 0; j < qptc; j++) {
+			netif_dbg(pdata, drv, pdata->netdev,
+				  "TXq%u mapped to TC%u\n", queue, i);
 			XGMAC_MTL_IOWRITE_BITS(pdata, queue, MTL_Q_TQOMR,
 					       Q2TCMAP, i);
 			pdata->q2tc_map[queue++] = i;
 		}
 
 		if (i < qptc_extra) {
+			netif_dbg(pdata, drv, pdata->netdev,
+				  "TXq%u mapped to TC%u\n", queue, i);
 			XGMAC_MTL_IOWRITE_BITS(pdata, queue, MTL_Q_TQOMR,
 					       Q2TCMAP, i);
 			pdata->q2tc_map[queue++] = i;
@@ -2017,11 +2055,15 @@ static void xgbe_config_queue_mapping(struct xgbe_prv_data *pdata)
 	for (i = 0, prio = 0; i < prio_queues;) {
 		mask = 0;
 		for (j = 0; j < ppq; j++) {
+			netif_dbg(pdata, drv, pdata->netdev,
+				  "PRIO%u mapped to RXq%u\n", prio, i);
 			mask |= (1 << prio);
 			pdata->prio2q_map[prio++] = i;
 		}
 
 		if (i < ppq_extra) {
+			netif_dbg(pdata, drv, pdata->netdev,
+				  "PRIO%u mapped to RXq%u\n", prio, i);
 			mask |= (1 << prio);
 			pdata->prio2q_map[prio++] = i;
 		}
@@ -2101,8 +2143,6 @@ static void xgbe_config_loopback(struct xgbe_prv_data *pdata)
 	else
 		xgbe_disable_loopback(pdata);
 }
-
-
 
 static void xgbe_config_vlan_support(struct xgbe_prv_data *pdata)
 {
@@ -2354,8 +2394,10 @@ static int xgbe_init(struct xgbe_prv_data *pdata)
 
 	/* Flush Tx queues */
 	ret = xgbe_flush_tx_queues(pdata);
-	if (ret)
+	if (ret) {
+		netdev_err(pdata->netdev, "error flushing TX queues\n");
 		return ret;
+	}
 
 	/*
 	 * Initialize DMA related features
@@ -2424,8 +2466,8 @@ void xgbe_init_function_ptrs_dev(struct xgbe_hw_if *hw_if)
 	hw_if->enable_rx_csum = xgbe_enable_rx_csum;
 	hw_if->disable_rx_csum = xgbe_disable_rx_csum;
 
-        hw_if->enable_loopback = xgbe_enable_loopback;
-        hw_if->disable_loopback = xgbe_disable_loopback;
+	hw_if->enable_loopback = xgbe_enable_loopback;
+	hw_if->disable_loopback = xgbe_disable_loopback;
 
 	hw_if->enable_rx_vlan_stripping = xgbe_enable_rx_vlan_stripping;
 	hw_if->disable_rx_vlan_stripping = xgbe_disable_rx_vlan_stripping;
@@ -2511,4 +2553,6 @@ void xgbe_init_function_ptrs_dev(struct xgbe_hw_if *hw_if)
 	hw_if->set_rss_hash_key = xgbe_set_rss_hash_key;
 	hw_if->set_rss_lookup_table = xgbe_set_rss_lookup_table;
 
+	DBGPR("<--xgbe_init_function_ptrs\n");
 }
+
