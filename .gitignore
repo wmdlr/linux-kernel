@@ -17,7 +17,6 @@
 *.pch
 
 # Libraries
-*.lib
 *.a
 *.la
 *.lo
@@ -50,3 +49,22 @@ modules.order
 Module.symvers
 Mkfile.old
 dkms.conf
+
+# Kernel postbuild
+!*.modbuiltin
+!*.modpost
+*.builtin
+vmlinux
+*.tmp_vmlinux*
+*.version
+
+# Kernel config
+.config
+.config.old
+
+# Kernel autogen
+**/include/generated/
+**/include/config
+**/kernel/asm-offsets.s
+**/kernel/bounds.s
+**/mod/devicetable-offsets.s

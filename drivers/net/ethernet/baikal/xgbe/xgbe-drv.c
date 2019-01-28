@@ -627,16 +627,16 @@ static void xgbe_napi_enable(struct xgbe_prv_data *pdata, unsigned int add)
 		for (i = 0; i < pdata->channel_count; i++, channel++) {
 			if (add) {
 				netif_napi_add(pdata->netdev, &channel->napi_rx,
-					       xgbe_one_rx_poll, NAPI_POLL_WEIGHT);
+					       xgbe_one_rx_poll, XGBE_NAPI_POLL_WEIGHT);
 				netif_napi_add(pdata->netdev, &channel->napi_tx,
-					       xgbe_one_tx_poll, NAPI_POLL_WEIGHT);
+					       xgbe_one_tx_poll, XGBE_NAPI_POLL_WEIGHT);
 			}
 			napi_enable(&channel->napi_rx);
 			napi_enable(&channel->napi_tx);
 		}
 	} else {
 		if (add)
-			netif_napi_add(pdata->netdev, &pdata->napi, xgbe_all_poll, NAPI_POLL_WEIGHT);
+			netif_napi_add(pdata->netdev, &pdata->napi, xgbe_all_poll, XGBE_NAPI_POLL_WEIGHT);
 
 		napi_enable(&pdata->napi);
 	}

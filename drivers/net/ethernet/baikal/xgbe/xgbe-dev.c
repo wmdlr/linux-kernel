@@ -495,10 +495,6 @@ static int xgbe_disable_tx_flow_control(struct xgbe_prv_data *pdata)
 	unsigned int reg, reg_val;
 	unsigned int i;
 
-	/* Clear MTL flow control */
-	for (i = 0; i < pdata->rx_q_count; i++)
-		XGMAC_MTL_IOWRITE_BITS(pdata, i, MTL_Q_RQOMR, EHFC, 0);
-
 	/* Clear MAC flow control */
 	max_q_count = XGMAC_MAX_FLOW_CONTROL_QUEUES;
 	q_count = min_t(unsigned int, pdata->tx_q_count, max_q_count);
@@ -519,10 +515,6 @@ static int xgbe_enable_tx_flow_control(struct xgbe_prv_data *pdata)
 	unsigned int max_q_count, q_count;
 	unsigned int reg, reg_val;
 	unsigned int i;
-
-	/* Set MTL flow control */
-	for (i = 0; i < pdata->rx_q_count; i++)
-		XGMAC_MTL_IOWRITE_BITS(pdata, i, MTL_Q_RQOMR, EHFC, 1);
 
 	/* Set MAC flow control */
 	max_q_count = XGMAC_MAX_FLOW_CONTROL_QUEUES;
@@ -546,14 +538,27 @@ static int xgbe_enable_tx_flow_control(struct xgbe_prv_data *pdata)
 
 static int xgbe_disable_rx_flow_control(struct xgbe_prv_data *pdata)
 {
+	int i = 0;
+
 	XGMAC_IOWRITE_BITS(pdata, MAC_RFCR, RFE, 0);
+
+	/* Clear MTL flow control */
+	for (i = 0; i < pdata->rx_q_count; i++)
+		XGMAC_MTL_IOWRITE_BITS(pdata, i, MTL_Q_RQOMR, EHFC, 0);
 
 	return 0;
 }
 
 static int xgbe_enable_rx_flow_control(struct xgbe_prv_data *pdata)
 {
+	int i = 0;
+
 	XGMAC_IOWRITE_BITS(pdata, MAC_RFCR, RFE, 1);
+
+	/* Set MTL flow control */
+	for (i = 0; i < pdata->rx_q_count; i++)
+		XGMAC_MTL_IOWRITE_BITS(pdata, i, MTL_Q_RQOMR, EHFC, 1);
+
 
 	return 0;
 }
