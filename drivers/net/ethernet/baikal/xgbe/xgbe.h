@@ -131,6 +131,8 @@
 #define XGBE_DRV_VERSION	"1.0.4-a"
 #define XGBE_DRV_DESC		"Baikal 10 Gigabit Ethernet Driver"
 
+#define XGBE_NAPI_POLL_WEIGHT	4096
+
 /* Descriptor related defines */
 #define XGBE_TX_DESC_CNT	512
 #define XGBE_TX_DESC_MIN_FREE	(XGBE_TX_DESC_CNT >> 3)
