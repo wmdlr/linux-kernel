@@ -126,6 +126,7 @@
 #include "xgbe.h"
 #include "xgbe-common.h"
 
+static int xgbe_tx_poll(struct xgbe_channel *channel);
 static int xgbe_one_poll(struct napi_struct *napi, int budget);
 static int xgbe_all_poll(struct napi_struct *, int);
 
@@ -435,40 +436,47 @@ static irqreturn_t xgbe_dma_isr(int irq, void *data) {
 //        return IRQ_HANDLED;
 //}
 
-//TODO: fix to use with
-//static void xgbe_tx_timer(unsigned long data)
-//{
-//	struct xgbe_channel *channel = (struct xgbe_channel *)data;
-//	struct xgbe_prv_data *pdata = channel->pdata;
-//
-//	if (pdata->per_channel_irq) {
-//		struct napi_struct *napi_tx = &channel->napi_tx;
-//		//struct napi_struct *napi_rx = &channel->napi_rx;
-//
-//		if (napi_schedule_prep(napi_tx)) {
-//			disable_irq_nosync(channel->tx_dma_irq);
-//			__napi_schedule(napi_tx);
-//		}
-//
-//		//if (napi_schedule_prep(napi_rx)) {
-//		//	disable_irq_nosync(channel->rx_dma_irq);
-//		//	__napi_schedule(napi_rx);
-//		//}
-//		/* Turn on polling */
-//	} else {
-//		struct napi_struct *napi = &pdata->napi;;
-//		if (napi_schedule_prep(napi)) {
-//			xgbe_disable_rx_tx_ints(pdata);
-//
-//			/* Turn on polling */
-//			__napi_schedule(napi);
-//		}
-//	}
-//
-//	channel->tx_timer_active = 0;
-//
-//	DBGPR("<--xgbe_tx_timer\n");
-//}
+static void xgbe_tx_timer(unsigned long data)
+{
+#if OBSOLETE_IMPL
+	struct xgbe_channel *channel = (struct xgbe_channel *)data;
+	struct xgbe_prv_data *pdata = channel->pdata;
+
+	if (pdata->per_channel_irq) {
+		struct napi_struct *napi_tx = &channel->napi_tx;
+		//struct napi_struct *napi_rx = &channel->napi_rx;
+
+		if (napi_schedule_prep(napi_tx)) {
+			disable_irq_nosync(channel->tx_dma_irq);
+			__napi_schedule(napi_tx);
+		}
+
+		//if (napi_schedule_prep(napi_rx)) {
+		//	disable_irq_nosync(channel->rx_dma_irq);
+		//	__napi_schedule(napi_rx);
+		//}
+		/* Turn on polling */
+	} else {
+		struct napi_struct *napi = &pdata->napi;;
+		if (napi_schedule_prep(napi)) {
+			xgbe_disable_rx_tx_ints(pdata);
+
+			/* Turn on polling */
+			__napi_schedule(napi);
+		}
+	}
+
+	channel->tx_timer_active = 0;
+
+	DBGPR("<--xgbe_tx_timer\n");
+#else
+	struct xgbe_channel *channel = (struct xgbe_channel *)data;
+
+	xgbe_tx_poll(channel);
+
+	channel->tx_timer_active = 0;
+#endif
+}
 
 static void xgbe_service(struct work_struct *work)
 {
@@ -501,9 +509,8 @@ static void xgbe_init_timers(struct xgbe_prv_data *pdata)
 		if (!channel->tx_ring)
 			break;
 
-//TODO: enable tx_timer if it is necessary
-//		setup_timer(&channel->tx_timer, xgbe_tx_timer,
-//			    (unsigned long)channel);
+		setup_timer(&channel->tx_timer, xgbe_tx_timer,
+			    (unsigned long)channel);
 	}
 }
 
@@ -2173,36 +2180,16 @@ next_packet:
 
 static int xgbe_one_poll(struct napi_struct *napi, int budget)
 {
-	struct xgbe_prv_data *pdata = container_of(napi, struct xgbe_prv_data, napi);
-	struct xgbe_channel *channel;
-	int ring_budget;
-	int processed, last_processed;
-	unsigned int i;
+	struct xgbe_channel *channel = container_of(napi, struct xgbe_channel, napi);
+	int processed;
 
-	processed = 0;
-	ring_budget = budget / pdata->rx_ring_count;
-	do {
-		last_processed = processed;
+	xgbe_tx_poll(channel);
 
-		channel = pdata->channel;
-		for (i = 0; i < pdata->channel_count; i++, channel++) {
-			/* Cleanup Tx ring first */
-			xgbe_tx_poll(channel);
+	processed = xgbe_rx_poll(channel, budget);
 
-			/* Process Rx ring next */
-			if (ring_budget > (budget - processed))
-				ring_budget = budget - processed;
-			processed += xgbe_rx_poll(channel, ring_budget);
-		}
-	} while ((processed < budget) && (processed != last_processed));
-
-	/* If we processed everything, we are done */
 	if (processed < budget) {
-		/* Turn off polling */
 		napi_complete(napi);
-
-		/* Enable Rx interrupts */
-		xgbe_enable_rx_ints(pdata);
+		enable_irq(channel->rx_dma_irq);
 	}
 
 	return processed;
