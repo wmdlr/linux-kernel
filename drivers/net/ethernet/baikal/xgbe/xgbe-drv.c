@@ -122,13 +122,33 @@
 #include <linux/if_ether.h>
 #include <linux/net_tstamp.h>
 #include <linux/phy.h>
+#include <linux/atomic.h>
 
 #include "xgbe.h"
 #include "xgbe-common.h"
 
+atomic_t tx_poll_mtx;
+struct tasklet_struct tx_deferred_irq;
+
 static int xgbe_tx_poll(struct xgbe_channel *channel);
 static int xgbe_one_poll(struct napi_struct *napi, int budget);
 static int xgbe_all_poll(struct napi_struct *, int);
+
+/* Wrapper for exclusive access to xgbe_tx_poll() */
+void xgbe_exclusive_tx_poll(struct xgbe_channel *channel) {
+
+	if (atomic_dec_and_test(&tx_poll_mtx)) {
+			xgbe_tx_poll(channel);
+			atomic_set(&tx_poll_mtx, 1);
+	}
+}
+
+/* Wrapper for xgbe_exclusive_tx_poll() to use in tasklet */
+void _xgbe_one_poll(unsigned long data) {
+	struct xgbe_channel *channel = (struct xgbe_channel *)data;
+
+	xgbe_exclusive_tx_poll(channel);
+}
 
 static int xgbe_alloc_channels(struct xgbe_prv_data *pdata) {
 	struct xgbe_channel *channel_mem, *channel;
@@ -151,6 +171,13 @@ static int xgbe_alloc_channels(struct xgbe_prv_data *pdata) {
 			  GFP_KERNEL);
 	if (!rx_ring)
 		goto err_rx_ring;
+
+	/*
+	 * Assign only the first channel for the tx tasklet
+	 * TODO: Assign different tasklets for different channels
+	 */
+	tasklet_init(&tx_deferred_irq, _xgbe_one_poll, (unsigned long)channel_mem);
+	atomic_set(&tx_poll_mtx, 1);
 
 	for (i = 0, channel = channel_mem; i < count; i++, channel++) {
 		snprintf(channel->name, sizeof(channel->name), "channel-%d", i);
@@ -371,6 +398,18 @@ isr_done:
 	return IRQ_HANDLED;
 }
 
+static irqreturn_t xgbe_tx_dma_isr(int irq, void *data) {
+
+	struct xgbe_channel *channel = data;
+	unsigned int dma_ch_isr;
+
+    dma_ch_isr = XGMAC_DMA_IOREAD(channel, DMA_CH_SR);
+    tasklet_hi_schedule(&tx_deferred_irq);
+	XGMAC_DMA_IOWRITE(channel, DMA_CH_SR, dma_ch_isr);
+
+    return IRQ_HANDLED;
+}
+
 static irqreturn_t xgbe_dma_isr(int irq, void *data) {
 
 	struct xgbe_channel *channel = data;
@@ -472,9 +511,16 @@ static void xgbe_tx_timer(unsigned long data)
 #else
 	struct xgbe_channel *channel = (struct xgbe_channel *)data;
 
-	xgbe_tx_poll(channel);
+	xgbe_exclusive_tx_poll(channel);
 
-	channel->tx_timer_active = 0;
+	/*
+	 * This is hack to solve "net/sched/sch_generic.c:306 dev_watchdog+0x378/0x384()"
+	 * TODO: fix it
+	 */
+//	channel->tx_timer_active = 0;
+	channel->tx_timer_active = 1;
+	mod_timer(&channel->tx_timer,
+				  jiffies + usecs_to_jiffies(500));
 #endif
 }
 
@@ -642,7 +688,7 @@ static void xgbe_napi_enable(struct xgbe_prv_data *pdata, unsigned int add)
 		for (i = 0; i < pdata->channel_count; i++, channel++) {
 			if (add) {
 				netif_napi_add(pdata->netdev, &channel->napi,
-					       xgbe_one_poll, NAPI_POLL_WEIGHT);
+					       xgbe_one_poll, XGBE_NAPI_POLL_WEIGHT);
 			}
 			napi_enable(&channel->napi);
 		}
@@ -706,7 +752,7 @@ static int xgbe_request_irqs(struct xgbe_prv_data *pdata)
 			 channel->queue_index);
 
 		ret = devm_request_irq(pdata->dev, channel->tx_dma_irq,
-				       xgbe_dma_isr, 0,
+				       xgbe_tx_dma_isr, 0,
 				       channel->tx_dma_irq_name, channel);
 		if (ret) {
 			netdev_alert(netdev, "error requesting tx irq %d\n",
@@ -2183,7 +2229,7 @@ static int xgbe_one_poll(struct napi_struct *napi, int budget)
 	struct xgbe_channel *channel = container_of(napi, struct xgbe_channel, napi);
 	int processed;
 
-	xgbe_tx_poll(channel);
+	xgbe_exclusive_tx_poll(channel);
 
 	processed = xgbe_rx_poll(channel, budget);
 
