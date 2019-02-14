@@ -648,3 +648,4 @@ void xgbe_init_function_ptrs_phy(struct xgbe_phy_if *phy_if)
 	phy_if->phy_status      = be_xgbe_phy_read_status;
 	phy_if->phy_config_aneg = be_xgbe_phy_config_aneg;
 }
+

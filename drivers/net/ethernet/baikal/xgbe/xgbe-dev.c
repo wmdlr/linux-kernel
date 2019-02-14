@@ -192,7 +192,7 @@ static int xgbe_config_tx_pbl_val(struct xgbe_prv_data *pdata)
 
 	channel = pdata->channel;
 	for (i = 0; i < pdata->channel_count; i++, channel++) {
-		if (!channel->tx_ring)
+		if (unlikely(!channel->tx_ring))
 			break;
 
 		XGMAC_DMA_IOWRITE_BITS(channel, DMA_CH_TCR, PBL,
@@ -214,7 +214,7 @@ static int xgbe_config_rx_pbl_val(struct xgbe_prv_data *pdata)
 
 	channel = pdata->channel;
 	for (i = 0; i < pdata->channel_count; i++, channel++) {
-		if (!channel->rx_ring)
+		if (unlikely(!channel->rx_ring))
 			break;
 
 		XGMAC_DMA_IOWRITE_BITS(channel, DMA_CH_RCR, PBL,
@@ -231,7 +231,7 @@ static int xgbe_config_osp_mode(struct xgbe_prv_data *pdata)
 
 	channel = pdata->channel;
 	for (i = 0; i < pdata->channel_count; i++, channel++) {
-		if (!channel->tx_ring)
+		if (unlikely(!channel->tx_ring))
 			break;
 
 		XGMAC_DMA_IOWRITE_BITS(channel, DMA_CH_TCR, OSP,
@@ -290,7 +290,7 @@ static int xgbe_config_rx_coalesce(struct xgbe_prv_data *pdata)
 
 	channel = pdata->channel;
 	for (i = 0; i < pdata->channel_count; i++, channel++) {
-		if (!channel->rx_ring)
+		if (unlikely(!channel->rx_ring))
 			break;
 
 		XGMAC_DMA_IOWRITE_BITS(channel, DMA_CH_RIWT, RWT,
@@ -312,7 +312,7 @@ static void xgbe_config_rx_buffer_size(struct xgbe_prv_data *pdata)
 
 	channel = pdata->channel;
 	for (i = 0; i < pdata->channel_count; i++, channel++) {
-		if (!channel->rx_ring)
+		if (unlikely(!channel->rx_ring))
 			break;
 
 		XGMAC_DMA_IOWRITE_BITS(channel, DMA_CH_RCR, RBSZ,
@@ -327,7 +327,7 @@ static void xgbe_config_tso_mode(struct xgbe_prv_data *pdata)
 
 	channel = pdata->channel;
 	for (i = 0; i < pdata->channel_count; i++, channel++) {
-		if (!channel->tx_ring)
+		if (unlikely(!channel->tx_ring))
 			break;
 
 		XGMAC_DMA_IOWRITE_BITS(channel, DMA_CH_TCR, TSE, 1);
@@ -341,7 +341,7 @@ static void xgbe_config_sph_mode(struct xgbe_prv_data *pdata)
 
 	channel = pdata->channel;
 	for (i = 0; i < pdata->channel_count; i++, channel++) {
-		if (!channel->rx_ring)
+		if (unlikely(!channel->rx_ring))
 			break;
 
 		XGMAC_DMA_IOWRITE_BITS(channel, DMA_CH_CR, SPH, 1);
@@ -538,7 +538,7 @@ static int xgbe_enable_tx_flow_control(struct xgbe_prv_data *pdata)
 
 static int xgbe_disable_rx_flow_control(struct xgbe_prv_data *pdata)
 {
-	int i = 0;
+	unsigned int i;
 
 	XGMAC_IOWRITE_BITS(pdata, MAC_RFCR, RFE, 0);
 
@@ -551,14 +551,13 @@ static int xgbe_disable_rx_flow_control(struct xgbe_prv_data *pdata)
 
 static int xgbe_enable_rx_flow_control(struct xgbe_prv_data *pdata)
 {
-	int i = 0;
+	unsigned int i;
 
 	XGMAC_IOWRITE_BITS(pdata, MAC_RFCR, RFE, 1);
 
 	/* Set MTL flow control */
 	for (i = 0; i < pdata->rx_q_count; i++)
 		XGMAC_MTL_IOWRITE_BITS(pdata, i, MTL_Q_RQOMR, EHFC, 1);
-
 
 	return 0;
 }
@@ -627,21 +626,17 @@ static void xgbe_enable_dma_interrupts(struct xgbe_prv_data *pdata)
 
 		if (channel->tx_ring) {
 			/* Enable the following Tx interrupts
-			 *   TIE  - Transmit Interrupt Enable (unless using
-			 *          per channel interrupts)
+			 *   TIE  - Transmit Interrupt Enable
 			 */
-			//if (!pdata->per_channel_irq)
-				XGMAC_SET_BITS(dma_ch_ier, DMA_CH_IER, TIE, 1);
+			XGMAC_SET_BITS(dma_ch_ier, DMA_CH_IER, TIE, 1);
 		}
 		if (channel->rx_ring) {
 			/* Enable following Rx interrupts
 			 *   RBUE - Receive Buffer Unavailable Enable
-			 *   RIE  - Receive Interrupt Enable (unless using
-			 *          per channel interrupts)
+			 *   RIE  - Receive Interrupt Enable
 			 */
 			XGMAC_SET_BITS(dma_ch_ier, DMA_CH_IER, RBUE, 1);
-			//if (!pdata->per_channel_irq)
-				XGMAC_SET_BITS(dma_ch_ier, DMA_CH_IER, RIE, 1);
+			XGMAC_SET_BITS(dma_ch_ier, DMA_CH_IER, RIE, 1);
 		}
 
 		XGMAC_DMA_IOWRITE(channel, DMA_CH_IER, dma_ch_ier);
@@ -714,6 +709,7 @@ static int xgbe_set_promiscuous_mode(struct xgbe_prv_data *pdata,
 
 	netif_dbg(pdata, drv, pdata->netdev, "%s promiscuous mode\n",
 		  enable ? "entering" : "leaving");
+
 	XGMAC_IOWRITE_BITS(pdata, MAC_PFR, PR, val);
 
 	return 0;
@@ -729,6 +725,7 @@ static int xgbe_set_all_multicast_mode(struct xgbe_prv_data *pdata,
 
 	netif_dbg(pdata, drv, pdata->netdev, "%s allmulti mode\n",
 		  enable ? "entering" : "leaving");
+
 	XGMAC_IOWRITE_BITS(pdata, MAC_PFR, PM, val);
 
 	return 0;
@@ -1389,9 +1386,6 @@ static void xgbe_tx_start_xmit(struct xgbe_channel *channel,
 	struct xgbe_prv_data *pdata = channel->pdata;
 	struct xgbe_ring_data *rdata;
 
-	/* Make sure everything is written before the register write */
-	wmb();
-
 	/* Issue a poll command to Tx DMA by writing address
 	 * of next immediate free descriptor */
 	rdata = XGBE_GET_DESC_DATA(ring, ring->cur);
@@ -1399,11 +1393,9 @@ static void xgbe_tx_start_xmit(struct xgbe_channel *channel,
 			  lower_32_bits(rdata->rdesc_dma));
 
 	/* Start the Tx timer */
-	if (pdata->tx_usecs && !channel->tx_timer_active) {
-		channel->tx_timer_active = 1;
+	if (pdata->tx_usecs)
 		mod_timer(&channel->tx_timer,
 			  jiffies + usecs_to_jiffies(pdata->tx_usecs));
-	}
 
 	ring->tx.xmit_more = 0;
 }
@@ -1610,7 +1602,7 @@ static void xgbe_dev_xmit(struct xgbe_channel *channel)
 	XGMAC_SET_BITS_LE(rdesc->desc3, TX_NORMAL_DESC3, OWN, 1);
 
 	/* Make sure ownership is written to the descriptor */
-	smp_wmb();
+	dma_wmb();
 
 	ring->cur = cur_index + 1;
 	if (!packet->skb->xmit_more ||
@@ -1645,9 +1637,6 @@ static int xgbe_dev_read(struct xgbe_channel *channel)
 	/* Check for data availability */
 	if (XGMAC_GET_BITS_LE(rdesc->desc3, RX_NORMAL_DESC3, OWN))
 		return 1;
-
-	/* Make sure descriptor fields are read after reading the OWN bit */
-	dma_rmb();
 
 	if (XGMAC_GET_BITS_LE(rdesc->desc3, RX_NORMAL_DESC3, CTXT)) {
 		/* Timestamp Context Descriptor */
@@ -2218,7 +2207,7 @@ static void xgbe_enable_tx(struct xgbe_prv_data *pdata)
 	/* Enable each Tx DMA channel */
 	channel = pdata->channel;
 	for (i = 0; i < pdata->channel_count; i++, channel++) {
-		if (!channel->tx_ring)
+		if (unlikely(!channel->tx_ring))
 			break;
 
 		XGMAC_DMA_IOWRITE_BITS(channel, DMA_CH_TCR, ST, 1);
@@ -2241,7 +2230,7 @@ static void xgbe_disable_tx(struct xgbe_prv_data *pdata)
 	/* Prepare for Tx DMA channel stop */
 	channel = pdata->channel;
 	for (i = 0; i < pdata->channel_count; i++, channel++) {
-		if (!channel->tx_ring)
+		if (unlikely(!channel->tx_ring))
 			break;
 
 		xgbe_prepare_tx_stop(pdata, channel);
@@ -2257,7 +2246,7 @@ static void xgbe_disable_tx(struct xgbe_prv_data *pdata)
 	/* Disable each Tx DMA channel */
 	channel = pdata->channel;
 	for (i = 0; i < pdata->channel_count; i++, channel++) {
-		if (!channel->tx_ring)
+		if (unlikely(!channel->tx_ring))
 			break;
 
 		XGMAC_DMA_IOWRITE_BITS(channel, DMA_CH_TCR, ST, 0);
@@ -2272,7 +2261,7 @@ static void xgbe_enable_rx(struct xgbe_prv_data *pdata)
 	/* Enable each Rx DMA channel */
 	channel = pdata->channel;
 	for (i = 0; i < pdata->channel_count; i++, channel++) {
-		if (!channel->rx_ring)
+		if (unlikely(!channel->rx_ring))
 			break;
 
 		XGMAC_DMA_IOWRITE_BITS(channel, DMA_CH_RCR, SR, 1);
@@ -2308,7 +2297,7 @@ static void xgbe_disable_rx(struct xgbe_prv_data *pdata)
 	/* Disable each Rx DMA channel */
 	channel = pdata->channel;
 	for (i = 0; i < pdata->channel_count; i++, channel++) {
-		if (!channel->rx_ring)
+		if (unlikely(!channel->rx_ring))
 			break;
 
 		XGMAC_DMA_IOWRITE_BITS(channel, DMA_CH_RCR, SR, 0);
@@ -2323,7 +2312,7 @@ static void xgbe_powerup_tx(struct xgbe_prv_data *pdata)
 	/* Enable each Tx DMA channel */
 	channel = pdata->channel;
 	for (i = 0; i < pdata->channel_count; i++, channel++) {
-		if (!channel->tx_ring)
+		if (unlikely(!channel->tx_ring))
 			break;
 
 		XGMAC_DMA_IOWRITE_BITS(channel, DMA_CH_TCR, ST, 1);
@@ -2341,7 +2330,7 @@ static void xgbe_powerdown_tx(struct xgbe_prv_data *pdata)
 	/* Prepare for Tx DMA channel stop */
 	channel = pdata->channel;
 	for (i = 0; i < pdata->channel_count; i++, channel++) {
-		if (!channel->tx_ring)
+		if (unlikely(!channel->tx_ring))
 			break;
 
 		xgbe_prepare_tx_stop(pdata, channel);
@@ -2353,7 +2342,7 @@ static void xgbe_powerdown_tx(struct xgbe_prv_data *pdata)
 	/* Disable each Tx DMA channel */
 	channel = pdata->channel;
 	for (i = 0; i < pdata->channel_count; i++, channel++) {
-		if (!channel->tx_ring)
+		if (unlikely(!channel->tx_ring))
 			break;
 
 		XGMAC_DMA_IOWRITE_BITS(channel, DMA_CH_TCR, ST, 0);
@@ -2368,7 +2357,7 @@ static void xgbe_powerup_rx(struct xgbe_prv_data *pdata)
 	/* Enable each Rx DMA channel */
 	channel = pdata->channel;
 	for (i = 0; i < pdata->channel_count; i++, channel++) {
-		if (!channel->rx_ring)
+		if (unlikely(!channel->rx_ring))
 			break;
 
 		XGMAC_DMA_IOWRITE_BITS(channel, DMA_CH_RCR, SR, 1);
@@ -2383,7 +2372,7 @@ static void xgbe_powerdown_rx(struct xgbe_prv_data *pdata)
 	/* Disable each Rx DMA channel */
 	channel = pdata->channel;
 	for (i = 0; i < pdata->channel_count; i++, channel++) {
-		if (!channel->rx_ring)
+		if (unlikely(!channel->rx_ring))
 			break;
 
 		XGMAC_DMA_IOWRITE_BITS(channel, DMA_CH_RCR, SR, 0);

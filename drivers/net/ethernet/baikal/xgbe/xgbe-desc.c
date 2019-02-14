@@ -355,7 +355,7 @@ static void xgbe_wrapper_tx_descriptor_init(struct xgbe_prv_data *pdata)
 	channel = pdata->channel;
 	for (i = 0; i < pdata->channel_count; i++, channel++) {
 		ring = channel->tx_ring;
-		if (!ring)
+		if (unlikely(!ring))
 			break;
 
 		rdesc = ring->rdesc;
@@ -396,7 +396,7 @@ static void xgbe_wrapper_rx_descriptor_init(struct xgbe_prv_data *pdata)
 	channel = pdata->channel;
 	for (i = 0; i < pdata->channel_count; i++, channel++) {
 		ring = channel->rx_ring;
-		if (!ring)
+		if (unlikely(!ring))
 			break;
 
 		rdesc = ring->rdesc;

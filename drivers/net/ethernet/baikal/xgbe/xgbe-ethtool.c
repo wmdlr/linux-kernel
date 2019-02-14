@@ -138,32 +138,32 @@ struct xgbe_eth_stats {
 	}
 
 static const struct xgbe_eth_stats xgbe_gstring_stats[] = {
-	XGMAC_STAT("tx_bytes", txoctetcount),
-	XGMAC_STAT("tx_packets", txframecount),
-	XGMAC_STAT("tx_unicast_packets", txunicastframes),
-	XGMAC_STAT("tx_broadcast_packets", txbroadcastframes),
-	XGMAC_STAT("tx_multicast_packets", txmulticastframes),
-	XGMAC_STAT("tx_vlan_packets", txvlanframes),
-    XGMAC_EXT_STAT("tx_tso_packets", tx_tso_packets),
-	XGMAC_STAT("tx_underflow_errors", txunderflowerror),
-	XGMAC_STAT("tx_pause_frames", txpauseframes),
+	XGMAC_STAT("tx_bytes", tx_octet_count),
+	XGMAC_STAT("tx_packets", tx_frame_count),
+	XGMAC_STAT("tx_unicast_packets", tx_unicast_frames),
+	XGMAC_STAT("tx_broadcast_packets", tx_broadcast_frames),
+	XGMAC_STAT("tx_multicast_packets", tx_multicast_frames),
+	XGMAC_STAT("tx_vlan_packets", tx_vlan_frames),
+	XGMAC_EXT_STAT("tx_tso_packets", tx_tso_packets),
+	XGMAC_STAT("tx_underflow_errors", tx_underflow_error),
+	XGMAC_STAT("tx_pause_frames", tx_pause_frames),
 
-	XGMAC_STAT("rx_bytes", rxoctetcount),
-	XGMAC_STAT("rx_packets", rxframecount),
-	XGMAC_STAT("rx_unicast_packets", rxunicastframes),
-	XGMAC_STAT("rx_broadcast_packets", rxbroadcastframes),
-	XGMAC_STAT("rx_multicast_packets", rxmulticastframes),
-	XGMAC_STAT("rx_vlan_packets", rxvlanframes),
-	XGMAC_STAT("rx_undersize_packets", rxundersize),
-	XGMAC_STAT("rx_oversize_packets", rxoversize),
-	XGMAC_STAT("rx_crc_errors", rxcrcerror),
-	XGMAC_STAT("rx_crc_errors_small_packets", rxrunterror),
-	XGMAC_STAT("rx_crc_errors_giant_packets", rxjabbererror),
-	XGMAC_STAT("rx_length_errors", rxlengtherror),
-	XGMAC_STAT("rx_out_of_range_errors", rxoutofrangetype),
-	XGMAC_STAT("rx_fifo_overflow_errors", rxfifooverflow),
-	XGMAC_STAT("rx_watchdog_errors", rxwatchdogerror),
-	XGMAC_STAT("rx_pause_frames", rxpauseframes),
+	XGMAC_STAT("rx_bytes", rx_octet_count),
+	XGMAC_STAT("rx_packets", rx_frame_count),
+	XGMAC_STAT("rx_unicast_packets", rx_unicast_frames),
+	XGMAC_STAT("rx_broadcast_packets", rx_broadcast_frames),
+	XGMAC_STAT("rx_multicast_packets", rx_multicast_frames),
+	XGMAC_STAT("rx_vlan_packets", rx_vlan_frames),
+	XGMAC_STAT("rx_undersize_packets", rx_undersize),
+	XGMAC_STAT("rx_oversize_packets", rx_oversize),
+	XGMAC_STAT("rx_crc_errors", rx_crc_error),
+	XGMAC_STAT("rx_crc_errors_small_packets", rx_runt_error),
+	XGMAC_STAT("rx_crc_errors_giant_packets", rx_jabber_error),
+	XGMAC_STAT("rx_length_errors", rx_length_error),
+	XGMAC_STAT("rx_out_of_range_errors", rx_out_of_range_type),
+	XGMAC_STAT("rx_fifo_overflow_errors", rx_fifo_overflow),
+	XGMAC_STAT("rx_watchdog_errors", rx_watchdog_error),
+	XGMAC_STAT("rx_pause_frames", rx_pause_frames),
 	XGMAC_EXT_STAT("rx_split_header_packets", rx_split_header_packets),
 	XGMAC_EXT_STAT("rx_buffer_unavailable", rx_buffer_unavailable),
 };
@@ -176,7 +176,7 @@ static void xgbe_get_strings(struct net_device *netdev, u32 stringset, u8 *data)
 
 	switch (stringset) {
 	case ETH_SS_STATS:
-		for (i = 0; i < XGBE_STATS_COUNT; i++) {
+		for (i = 0; i < XGBE_STATS_COUNT; ++i) {
 			memcpy(data, xgbe_gstring_stats[i].stat_string,
 			       ETH_GSTRING_LEN);
 			data += ETH_GSTRING_LEN;
@@ -192,7 +192,7 @@ static void xgbe_get_ethtool_stats(struct net_device *netdev,
 	u8 *stat;
 	int i;
 
-	for (i = 0; i < XGBE_STATS_COUNT; i++) {
+	for (i = 0; i < XGBE_STATS_COUNT; ++i) {
 		stat = (u8 *)pdata + xgbe_gstring_stats[i].stat_offset;
 		*data++ = *(u64 *)stat;
 	}
@@ -500,7 +500,7 @@ static int xgbe_get_rxfh(struct net_device *netdev, u32 *indir, u8 *key,
 	unsigned int i;
 
 	if (indir) {
-		for (i = 0; i < ARRAY_SIZE(pdata->rss_table); i++)
+		for (i = 0; i < ARRAY_SIZE(pdata->rss_table); ++i)
 			indir[i] = XGMAC_GET_BITS(pdata->rss_table[i],
 						  MAC_RSSDR, DMCH);
 	}

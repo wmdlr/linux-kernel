@@ -131,12 +131,9 @@
 #define XGBE_DRV_VERSION	"1.0.4-a"
 #define XGBE_DRV_DESC		"Baikal 10 Gigabit Ethernet Driver"
 
-#define XGBE_NAPI_POLL_WEIGHT	4096
-
 /* Descriptor related defines */
 #define XGBE_TX_DESC_CNT	512
 #define XGBE_TX_DESC_MIN_FREE	(XGBE_TX_DESC_CNT >> 3)
-#define XGBE_TX_DESC_MAX_PROC	(XGBE_TX_DESC_CNT >> 1)
 #define XGBE_RX_DESC_CNT	512
 
 #define XGBE_TX_MAX_BUF_SIZE	(0x3fff & ~(64 - 1))
@@ -189,9 +186,9 @@
 #define XGBE_DMA_IRQS		"be,per-channel-interrupt"
 
 /* Device tree properties */
-#define XGBE_PHY_MODESET_PROPERTY		"be,mode-set"
-#define XGBE_PHY_CLOCK_PROPERTY			"be,external-clock"
-#define XGBE_PHY_SYS_CLOCK				"xgbe_clk"
+#define XGBE_PHY_MODESET_PROPERTY	"be,mode-set"
+#define XGBE_PHY_CLOCK_PROPERTY		"be,external-clock"
+#define XGBE_PHY_SYS_CLOCK		"xgbe_clk"
 
 /* Timestamp support - values based on 50MHz PTP clock
  *   50MHz => 20 nsec
@@ -218,12 +215,12 @@
 	 ((_idx) & ((_ring)->rdesc_count - 1)))
 
 /* Default coalescing parameters */
-#define XGMAC_INIT_DMA_TX_USECS		1000
-#define XGMAC_INIT_DMA_TX_FRAMES	25
+#define XGMAC_INIT_DMA_TX_USECS		40000
+#define XGMAC_INIT_DMA_TX_FRAMES	64
 
 #define XGMAC_MAX_DMA_RIWT		0xff
 #define XGMAC_INIT_DMA_RX_USECS		30
-#define XGMAC_INIT_DMA_RX_FRAMES	25
+#define XGMAC_INIT_DMA_RX_FRAMES	64
 
 /* Flow control queue count */
 #define XGMAC_MAX_FLOW_CONTROL_QUEUES	8
@@ -452,7 +449,6 @@ struct xgbe_channel {
 
 	unsigned int saved_ier;
 
-	unsigned int tx_timer_active;
 	struct timer_list tx_timer;
 
 	struct xgbe_ring *tx_ring;
@@ -535,40 +531,41 @@ struct xgbe_phy {
 
 struct xgbe_stats {
 	/* Tx Stats */
-	u64 txdropped;
-	u64 txerrorcount;
-	u64 txframecount;
-	u64 txoctetcount;
-	u64 txbroadcastframes;
-	u64 txmulticastframes;
-	u64 txunicastframes;
-	u64 txunderflowerror;
-	u64 txpauseframes;
-	u64 txvlanframes;
+	u64 tx_dropped;
+	u64 tx_error_count;
+	u64 tx_frame_count;
+	u64 tx_octet_count;
+	u64 tx_broadcast_frames;
+	u64 tx_multicast_frames;
+	u64 tx_unicast_frames;
+	u64 tx_underflow_error;
+	u64 tx_pause_frames;
+	u64 tx_vlan_frames;
 
 	/* Rx Stats */
-	u64 rxrunerror;
-	u64 rxframecount;
-	u64 rxoctetcount;
-	u64 rxbroadcastframes;
-	u64 rxmulticastframes;
-	u64 rxunicastframes;
-	u64 rxcrcerror;
-	u64 rxrunterror;
-	u64 rxjabbererror;
-	u64 rxundersize;
-	u64 rxoversize;
-	u64 rxlengtherror;
-	u64 rxoutofrangetype;
-	u64 rxpauseframes;
-	u64 rxfifooverflow;
-	u64 rxvlanframes;
-	u64 rxwatchdogerror;
+	u64 rx_run_error;
+	u64 rx_frame_count;
+	u64 rx_octet_count;
+	u64 rx_broadcast_frames;
+	u64 rx_multicast_frames;
+	u64 rx_unicast_frames;
+	u64 rx_crc_error;
+	u64 rx_runt_error;
+	u64 rx_jabber_error;
+	u64 rx_undersize;
+	u64 rx_oversize;
+	u64 rx_length_error;
+	u64 rx_out_of_range_type;
+	u64 rx_pause_frames;
+	u64 rx_fifo_overflow;
+	u64 rx_vlan_frames;
+	u64 rx_watchdog_error;
 };
 
 struct xgbe_ext_stats {
 	u64 tx_tso_packets;
 	u64 rx_split_header_packets;
+	u64 tx_buffer_unavailable;
 	u64 rx_buffer_unavailable;
 };
 
