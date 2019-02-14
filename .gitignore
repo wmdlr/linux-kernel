@@ -68,3 +68,6 @@ vmlinux
 **/kernel/asm-offsets.s
 **/kernel/bounds.s
 **/mod/devicetable-offsets.s
+
+# Ctags
+tags
